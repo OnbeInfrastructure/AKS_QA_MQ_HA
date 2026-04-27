@@ -1,99 +1,238 @@
-replicaCount: 3  # Native HA: 3 replicas (1 active + 2 standby)
+# © Copyright IBM Corporation 2021, 2025
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# license must be set to "accept" to accept the terms of the IBM license
+license: "accept"
 
 image:
-  # Override repository via --set image.repository=<ACR_LOGIN_SERVER>/ibm-messaging/mq
-  # AKS clusters are assumed to have ACR pull access via managed identity.
-  repository: ibm-messaging/mq
-  tag: "9.4.0"
+  # repository is the container repository to use
+  repository: acraz1clusterqass.azurecr.io/ibm-mq/ibm-mqadvanced-server
+  # tag is the tag to use for the container repository
+  tag: 9.4.4.1-r1
+  # pullSecret is the secret to use when pulling the image from a private registry
+  pullSecret:
+  # pullPolicy is either IfNotPresent or Always (https://kubernetes.io/docs/concepts/containers/images/)
   pullPolicy: IfNotPresent
+  # disableDefaultPullSecret to use when pulling the image from a private registry and the ibm-entitlement-key is not required
+  disableDefaultPullSecret: false
 
-imagePullSecrets: []
+# set passwords for users: "admin" and "app"
+credentials:
+  # enabled is whether to configure user credentials via secret or not. (in MQ /run/secrets directory)
+  enable: false
+  # If enabled, provide the name of the secret that contains your user passwords. See adjacent README.md for instructions on how to create this Secret.
+  secret: "mq-credentials"
 
-nameOverride: ""
-fullnameOverride: ""
-
-serviceAccount:
-  create: true
+# metadata allows setting of additional labels and annottations to be added to all resources. Set on helm install using --set metadata.labels.KEY=VALUE,metadata.labels.=VALUE,...
+metadata:
+  labels:
+    application: ibm-mq
+    environment: qa
+    component: messaging
   annotations: {}
-  name: ""
 
-podAnnotations: {}
+# persistence section specifies persistence settings which apply to the whole chart
+persistence:
 
-podSecurityContext: {}
+  # dataPVC section specifies settings for the main Persistent Volume Claim, which is used for data in /mnt/mqm-data
+  dataPVC:
+    # enabled is whether to use this Persistent Volumes or not
+    enable: true
+    # name sets part of the name for this Persistent Volume Claim
+    name: "data"
+    ## size is the minimum size of the Persistent Volume
+    size: 30Gi
+    ## storageClass to use for this PVCs
+    storageClassName: "managed"
 
-securityContext:
-  runAsNonRoot: true
-  runAsUser: 1001
+  # logPVC section specifies settings for the main Persistent Volume Claim, which is used for log in /mnt/mqm-log
+  logPVC:
+    # enabled is whether to use this Persistent Volumes or not
+    enable: true
+    # name sets part of the name for this Persistent Volume Claim
+    name: "log"
+    ## size is the minimum size of the Persistent Volume
+    size: 20Gi
+    ## storageClass to use for this PVCs
+    storageClassName: "managed"
 
-service:
-  type: ClusterIP
-  ports:
-    mqListener: 1414
-    webConsole: 9443
-    metrics: 9157
-    replication: 9414
+  # qmPVC section specifies settings for the main Persistent Volume Claim, which is used for data in /mnt/mqm
+  qmPVC:
+    # enabled is whether to use this Persistent Volumes or not
+    enable: true
+    # name sets part of the name for this Persistent Volume Claim
+    name: "qm"
+    ## size is the minimum size of the Persistent Volume
+    size: 10Gi
+    ## storageClass to use for this PVCs
+    storageClassName: "managed"
 
-ingress:
-  enabled: false
-  className: ""
-  annotations: {}
-  hosts:
-    - host: ibm-mq.local
-      paths:
-        - path: /
-          pathType: Prefix
-  tls: []
 
 resources:
   limits:
-    cpu: 500m
-    memory: 512Mi
+    cpu: "4"
+    memory: 8Gi
   requests:
-    cpu: 250m
-    memory: 256Mi
+    cpu: "2"
+    memory: 4Gi
 
-persistence:
+security:
+  # context section specifies additional security context settings for the pod
+  context:
+    fsGroup: 0
+    supplementalGroups: []
+    seccompProfile:
+      type: 
+  # initVolumeAsRoot specifies whether or not storage provider requires root permissions to initialize
+  initVolumeAsRoot: false
+  runAsUser: 
+  readOnlyRootFilesystem: false
+
+# queueManager section specifies settings for the MQ Queue Manager
+queueManager:
+  # name allows you to specify the name to use for the queue manager.  Defaults to the Helm release name.
+  name: AKS_QA_MQ_HA
+  # nativeha specifies whether to run in nativeha mode with an active and two following container instances
+  nativeha:
+    enable: true
+  # multiinstance specifies whether to run in multiinstance mode with an active and one standby container instances
+  multiinstance:
+    enable: false
+  # Allows MQSC snippets to be loaded from configMaps. These will be loaded into the running instance
+  mqscConfigMaps:
+    - name: mqsc-aksqamqha 
+      items:
+        - 1line_Q_MQ_WAN.mqsc
+  # Allows MQSC snippets to be loaded from secrets. These will be loaded into the running instance
+  mqscSecrets: []
+  # Allows QM INI snippets to be loaded from configMaps. These will be loaded into the running instance
+  qminiConfigMaps: []
+  # Allows QM INI snippets to be loaded from secrets. These will be loaded into the running instance
+  qminiSecrets: []
+  # Enviroment variables to be associated with the queue manager containers
+  envVariables: []
+  # The duration in seconds the Queue Manager needs to terminate gracefully, difference in time between SIGTERM and SIGKILL
+  terminationGracePeriodSeconds: 30
+  # The stateful set updateStrategy policy
+  updateStrategy: RollingUpdate
+# pki is used to supply certificates, that are stored in k8s secrets, for use with the webconsole and queue manager.
+# Must be supplied as an array of yaml objects in the following format:
+# - name: <label to give certificate> (only for pki.keys)
+#   secret:
+#     secretName: <name of Kubernetes secret>
+#     items:
+#       - <certificate files to import> (for example: tls.key, tls.crt, ca.crt)
+pki:
+  keys: []
+  trust: []
+
+# livenessProbe section specifies setting for the MQ liveness probe, which checks for a running Queue Manager
+livenessProbe:
+  # initialDelaySeconds should be raised if your system cannot start the Queue Manager in 60 seconds
+  initialDelaySeconds: 120
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+# readinessProbe section specifies setting for the MQ readiness probe, which checks when the MQ listener is running
+readinessProbe:
+  initialDelaySeconds: 60
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 1
+
+# readinessProbe section specifies setting for the MQ readiness probe, which checks when the MQ listener is running
+startupProbe:
+  timeoutSeconds: 5
+  periodSeconds: 5
+  successThreshold: 1
+  failureThreshold: 60
+
+# route section specified if any additional Kubernetes services or OpenShift Routes should be defined
+route:
+    nodePort:
+      webconsole: false
+      mqtraffic: false
+      hacrrtraffic: false
+    openShiftRoute:
+      webconsole: false
+      mqtraffic: false
+      hacrrtraffic: false
+    loadBalancer:
+      webconsole: true
+      mqtraffic: true
+      # Additional annotations to be added to the load balancer annotations
+      annotations: 
+        service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+      loadBalancerSourceRanges: []
+    ingress:
+      webconsole: 
+        enable: false
+        hostname: 
+        path: /
+        tls: 
+          enable: false 
+          secret: 
+      annotations: {}
+
+# log section specifies settings for MQ error logs
+log:
+  format: basic
+  debug: false
+
+# trace can be used to enable MQ trace
+trace:
+  strmqm: false
+  crtmqdir: false
+  crtmqm: false
+
+# metrics section specifies settings for generating queue manager metrics
+metrics:
   enabled: true
-  storageClass: "managed-premium"
-  accessMode: ReadWriteOnce
-  size: 200Gi
 
-mq:
-  license: accept
-  qmgrName: QM1
-  nativeHA: "true"
-  adminPassword: ""
-  appPassword: ""
+affinity:
+  nodeAffinity:
+    matchExpressions:
+      - key: agentpool
+        operator: In
+        values:
+          - mqpool01
 
-mqsc: |
-  DEFINE QLOCAL('DEV.QUEUE.1') REPLACE DEFPSIST(YES)
-  DEFINE QLOCAL('DEV.QUEUE.2') REPLACE DEFPSIST(YES)
-  DEFINE QLOCAL('DEV.DEAD.LETTER.QUEUE') REPLACE DEFPSIST(YES)
-  DEFINE CHANNEL('DEV.APP.SVRCONN') CHLTYPE(SVRCONN) REPLACE
-  SET CHLAUTH('DEV.APP.SVRCONN') TYPE(BLOCKUSER) USERLIST('nobody')
-  SET CHLAUTH('*') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(NOACCESS)
-  SET CHLAUTH('DEV.APP.SVRCONN') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(CHANNEL) CHCKCLNT(REQUIRED)
-  ALTER AUTHINFO(SYSTEM.DEFAULT.AUTHINFO.IDPWOS) AUTHTYPE(IDPWOS) ADOPTCTX(YES)
-  REFRESH SECURITY TYPE(CONNAUTH)
-  DEFINE LISTENER('DEV.LISTENER.TCP') TRPTYPE(TCP) PORT(1414) REPLACE
-  START LISTENER('DEV.LISTENER.TCP')
+tolerations:
+  - key: "workload"
+    operator: "Equal"
+    value: "mq"
+    effect: "NoSchedule" 
+ 
 
-ini: |
-  [ServiceComponent]
-  Service=QueueManager
-  Name=QM1
-  [Channels]
-  MaxChannels=100
-  MaxActiveChannels=100
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: ibm-mq
 
-autoscaling:
-  enabled: false
-  minReplicas: 1
-  maxReplicas: 3
-  targetCPUUtilizationPercentage: 80
 
-nodeSelector: {}
+metadata:
+  annotations:
+    oneagent.dynatrace.com/inject: "false"
 
-tolerations: []
-
-affinity: {}
+web: 
+  enabled: true
+  manualConfig:
+    configMap:
+      name:
+    secret:
+      name:
